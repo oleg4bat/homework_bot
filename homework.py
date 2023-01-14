@@ -1,11 +1,13 @@
-import os
-
-import telegram
-import time
-import sys
-import requests
+import http
 import logging
+import os
+import time
+
+import requests
+import telegram
 from dotenv import load_dotenv
+
+from exceptions import OkStatusError
 
 load_dotenv()
 
@@ -13,10 +15,17 @@ load_dotenv()
 PRACTICUM_TOKEN = os.getenv('TOKEN')
 TELEGRAM_TOKEN = os.getenv('BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('CHAT_ID')
+TOKEN_NAMES = [
+    'PRACTICUM_TOKEN',
+    'TELEGRAM_TOKEN',
+    'TELEGRAM_CHAT_ID'
+]
 
 RETRY_PERIOD = 600
+ONE_DAY = 86400
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
+PARSE_MSG = 'Изменился статус проверки работы "{}". {}'
 
 
 HOMEWORK_VERDICTS = {
@@ -25,35 +34,27 @@ HOMEWORK_VERDICTS = {
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    filename='bot.log',
-    format='%(asctime)s, %(levelname)s, %(message)s'
-)
-
 
 def check_tokens():
     """Проверка наличия необходимых токенов."""
-    tokens = (globals()['PRACTICUM_TOKEN'],
-              globals()['TELEGRAM_CHAT_ID'],
-              globals()['TELEGRAM_TOKEN'],
-              )
-    if not all(tokens):
-        logging.critical('Нет необходимых токенов')
-        return False
-    else:
-        return True
+    for name in TOKEN_NAMES:
+        if not globals()[name]:
+            logging.critical('Нет необходимого токена {name}.')
+            return False
+        else:
+            return True
 
 
 def send_message(bot, message):
     """Отправка сообщения в телеграм."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-    except telegram.error.TelegramError as TGerrors:
-        logging.error(f'Сбой при отправке сообщения в чат - {TGerrors}')
-        raise Exception(TGerrors)
+    except telegram.error.TelegramError as error:
+        logging.error(f'Сбой при отправке сообщения в чат - {error}',
+                      exc_info=True)
+        raise Exception(error)
     else:
-        logging.debug('Сообщеие отправленно успешно.')
+        logging.debug('Сообщеие отправленно успешно.', exc_info=True)
 
 
 def get_api_answer(timestamp):
@@ -61,14 +62,21 @@ def get_api_answer(timestamp):
     payload = {'from_date': timestamp}
     try:
         response = requests.get(ENDPOINT, headers=HEADERS, params=payload)
-        if response.status_code != 200:
+        if response.status_code != http.HTTPStatus.OK:
+            if set(response.json()) == {'error', 'code'}:
+                logging.error('API домашки возвращает код, отличный от 200',
+                              exc_info=True)
+                error = response.json()['error']
+                code = response.json()['code']
+                raise OkStatusError(f'Информативное сообщение об ошибке с'
+                                    f'указанием {error} и {code}')
             logging.error('API домашки возвращает код, отличный от 200',
                           exc_info=True)
-            raise Exception
+            raise OkStatusError('API домашки возвращает код, отличный от 200')
         return response.json()
     except requests.URLRequired():
         logging.error('API недоступен:', exc_info=True)
-        raise requests.RequestException
+        raise requests.RequestException('API недоступен: ')
 
 
 def check_response(response):
@@ -79,12 +87,12 @@ def check_response(response):
         raise TypeError('Тип "response" не словарь')
     if not isinstance(response.get('homeworks'), list):
         logging.error('API выдает неверные данные.', exc_info=True)
-        raise TypeError('С API что-то не так.')
+        raise TypeError('В API домашка не стисок.')
     if 'homeworks' not in response:
         logging.error('API выдает неверные данные.', exc_info=True)
-        raise KeyError('С API что-то не так.')
+        raise KeyError('В API нет ключа домашки.')
     if keys not in response:
-        logging.error('API выдает неверные данные.', exc_info=True)
+        logging.error('в API нет необходимых ключей.', exc_info=True)
         return False
     else:
         True
@@ -94,21 +102,21 @@ def parse_status(homework):
     """Извлекает информацию о статусе конкретной домашной работе."""
     status = homework.get('status')
     if status not in HOMEWORK_VERDICTS:
-        logging.error('Домашка с неизвестным статусом')
+        logging.error('Домашка с неизвестным статусом', exc_info=True)
         raise KeyError('Домашка с неизвестным статусом')
     verdict = HOMEWORK_VERDICTS[status]
     if 'homework_name' not in homework:
         raise KeyError('Неизвестная домашка')
     homework_name = homework.get('homework_name')
-    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    return PARSE_MSG.format(homework_name, verdict)
 
 
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
-        sys.exit('Программа принудительно остановлена.')
+        return print('Программа принудительно остановлена.')
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    timestamp = int(time.time()) - 86400
+    timestamp = int(time.time()) - ONE_DAY
     old_message = ''
     while True:
         try:
@@ -125,10 +133,15 @@ def main():
 
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            logging.error(message)
+            logging.error(message, exc_info=True)
         finally:
             time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.DEBUG,
+        filename='bot.log',
+        format='%(asctime)s, %(levelname)s, %(message)s'
+    )
     main()
