@@ -35,17 +35,16 @@ HOMEWORK_VERDICTS = {
 }
 
 
-def check_tokens():
+def check_tokens() -> bool:
     """Проверка наличия необходимых токенов."""
     for name in TOKEN_NAMES:
         if not globals()[name]:
-            logging.critical('Нет необходимого токена {name}.')
+            logging.critical(f'Нет необходимого токена {name}.')
             return False
-        else:
-            return True
+        return True
 
 
-def send_message(bot, message):
+def send_message(bot: telegram.Bot, message: str) -> None:
     """Отправка сообщения в телеграм."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
@@ -57,31 +56,30 @@ def send_message(bot, message):
         logging.debug('Сообщеие отправленно успешно.', exc_info=True)
 
 
-def get_api_answer(timestamp):
+def get_api_answer(timestamp: int) -> dict:
     """Получение ответа от API."""
     payload = {'from_date': timestamp}
     try:
         response = requests.get(ENDPOINT, headers=HEADERS, params=payload)
         if response.status_code != http.HTTPStatus.OK:
-            if set(response.json()) == {'error', 'code'}:
-                logging.error('API домашки возвращает код, отличный от 200',
-                              exc_info=True)
-                error = response.json()['error']
-                code = response.json()['code']
-                raise OkStatusError(f'Информативное сообщение об ошибке с'
-                                    f'указанием {error} и {code}')
             logging.error('API домашки возвращает код, отличный от 200',
                           exc_info=True)
             raise OkStatusError('API домашки возвращает код, отличный от 200')
+        if set(response.json()) == {'error', 'code'}:
+            logging.error('API домашки возвращает код, отличный от 200',
+                          exc_info=True)
+            error = response.json()['error']
+            code = response.json()['code']
+            raise OkStatusError(error, code)
         return response.json()
     except requests.URLRequired():
         logging.error('API недоступен:', exc_info=True)
         raise requests.RequestException('API недоступен: ')
 
 
-def check_response(response):
+def check_response(response: dict) -> bool:
     """проверяет ответ API на соответствие документации."""
-    keys = ('homeworks', 'current_date',)
+    keys = ('homeworks', 'current_date')
     if not isinstance(response, dict):
         logging.error('API выдает неверные данные.', exc_info=True)
         raise TypeError('Тип "response" не словарь')
@@ -94,11 +92,10 @@ def check_response(response):
     if keys not in response:
         logging.error('в API нет необходимых ключей.', exc_info=True)
         return False
-    else:
-        True
+    return True
 
 
-def parse_status(homework):
+def parse_status(homework: dict) -> str:
     """Извлекает информацию о статусе конкретной домашной работе."""
     status = homework.get('status')
     if status not in HOMEWORK_VERDICTS:
@@ -111,7 +108,7 @@ def parse_status(homework):
     return PARSE_MSG.format(homework_name, verdict)
 
 
-def main():
+def main() -> None:
     """Основная логика работы бота."""
     if not check_tokens():
         return print('Программа принудительно остановлена.')
