@@ -5,5 +5,6 @@ class BaseError(Exception):
         self.txt = text
         self.code = code
 
+
 class OkStatusError(BaseError):
     pass
